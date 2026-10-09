@@ -1,0 +1,11 @@
+[project]
+name = "micro-agent"
+version = "0.1.0"
+description = "One-shot LangChain agent with MCP tools, sandboxed file access and a markdown knowledge base"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=1.0",
+    "langchain-openai>=0.3",
+    "langchain-mcp-adapters>=0.1",
+    "python-dotenv>=1.0",
+]

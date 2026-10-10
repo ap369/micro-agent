@@ -81,7 +81,7 @@ The sample `goal.md` asks the agent to summarise the knowledge base into `worksp
 | `MCP_CONFIG`      | no       | `mcp.json`   | MCP config file |
 | `KNOWLEDGE_DIR`   | no       | `knowledge`  | Knowledge folder |
 | `WORKSPACE_DIR`   | no       | `workspace`  | Sandboxed read/write folder |
-| `MAX_STEPS`       | no       | `50`         | Max agent steps before it gives up |
+| `MAX_STEPS`       | no       | `50`         | Max tool rounds (model call + tool call) before it gives up |
 
 Relative paths are resolved from the project folder.
 
@@ -103,7 +103,8 @@ Same format as Claude Desktop / Cursor:
 
 - `command` (+ `args`, `env`, `cwd`) starts a local **stdio** server
 - `url` (+ `headers`) connects over **streamable HTTP**; add `"transport": "sse"` for SSE servers
-- `${VAR}` placeholders are filled from your environment / `.env`, so secrets stay out of `mcp.json`
+- `${VAR}` placeholders are filled from your environment / `.env`, so secrets stay out of `mcp.json`. An unset variable is a config error (exit code 2)
+- stdio servers only get a minimal environment (`PATH`, `HOME`, ...) plus their own `env`; your `.env` secrets are never passed to them
 - `"disabled": true` skips a server
 - A server that fails to start prints a warning and is skipped. The run continues.
 

@@ -20,6 +20,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from mcp.client.stdio import get_default_environment
 from langchain_openai import ChatOpenAI
 from langgraph.errors import GraphRecursionError
 
@@ -49,6 +50,14 @@ def require_env(name: str) -> str:
     if not value:
         raise ConfigError(f"Missing required env var {name} (see .env.example)")
     return value
+
+
+def env_number(name: str, default: str, cast):
+    raw = os.getenv(name, default)
+    try:
+        return cast(raw)
+    except ValueError:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from None
 
 
 def read_text(path: Path, what: str) -> str:
@@ -147,7 +156,12 @@ def make_file_tools(workspace: Path) -> list:
 def expand_env(value):
     """Recursively replace ${VAR} placeholders with environment values."""
     if isinstance(value, str):
-        return re.sub(r"\$\{(\w+)\}", lambda m: os.getenv(m.group(1), ""), value)
+        def lookup(m: re.Match) -> str:
+            if m.group(1) not in os.environ:
+                raise ConfigError(f"mcp.json references ${{{m.group(1)}}} but it is not set (add it to .env)")
+            return os.environ[m.group(1)]
+
+        return re.sub(r"\$\{(\w+)\}", lookup, value)
     if isinstance(value, list):
         return [expand_env(v) for v in value]
     if isinstance(value, dict):
@@ -159,8 +173,8 @@ def to_connection(name: str, cfg: dict) -> dict:
     if "command" in cfg:
         conn = {"transport": "stdio", "command": cfg["command"], "args": cfg.get("args", [])}
         if cfg.get("env"):
-            # stdio servers don't inherit the parent env by default; keep PATH etc.
-            conn["env"] = {**os.environ, **cfg["env"]}
+            # only safe defaults (PATH, HOME, ...) — never leak the agent's secrets
+            conn["env"] = {**get_default_environment(), **cfg["env"]}
         if cfg.get("cwd"):
             conn["cwd"] = cfg["cwd"]
         return conn
@@ -215,7 +229,11 @@ def build_system_prompt(prompt: str, knowledge: str, workspace: Path) -> str:
         "Always use paths relative to the workspace root with the file tools.",
     ]
     if knowledge:
-        sections.append("# Knowledge base\n\n" + knowledge)
+        sections.append(
+            "# Knowledge base\n\n"
+            "The knowledge files below are already loaded in full. They are NOT in the "
+            "workspace — do not try to read them with the file tools.\n\n" + knowledge
+        )
     return "\n\n".join(sections)
 
 
@@ -227,13 +245,13 @@ async def run(args) -> int:
     knowledge = load_knowledge(resolve(os.getenv("KNOWLEDGE_DIR", "knowledge")))
     workspace = resolve(os.getenv("WORKSPACE_DIR", "workspace"))
     workspace.mkdir(parents=True, exist_ok=True)
-    max_steps = int(os.getenv("MAX_STEPS", "50"))
+    max_steps = env_number("MAX_STEPS", "50", int)
 
     model = ChatOpenAI(
         base_url=require_env("OPENAI_BASE_URL"),
         api_key=require_env("OPENAI_API_KEY"),
         model=require_env("LLM_MODEL"),
-        temperature=float(os.getenv("LLM_TEMPERATURE", "0")),
+        temperature=env_number("LLM_TEMPERATURE", "0", float),
     )
 
     tools = make_file_tools(workspace) + await load_mcp_tools(
@@ -250,7 +268,8 @@ async def run(args) -> int:
     final = None
     async for update in agent.astream(
         {"messages": [HumanMessage(goal)]},
-        {"recursion_limit": max_steps},
+        # each tool round = model step + tools step
+        {"recursion_limit": 2 * max_steps + 1},
         stream_mode="updates",
     ):
         for node in update.values():

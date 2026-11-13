@@ -63,7 +63,7 @@ The sample `goal.md` has the agent write `workspace/report.md` using the `report
 
 | File / folder   | Purpose |
 |-----------------|---------|
-| `agent.py`      | The script |
+| `agent.py`      | Entry point (`uv run agent.py`); the code lives in `micro_agent/` |
 | `goal.md`       | The task, sent as the user message |
 | `prompt.md`     | System instructions / persona |
 | `skills/`       | One folder per skill, each with a `SKILL.md` and optional supporting files |
@@ -71,6 +71,32 @@ The sample `goal.md` has the agent write `workspace/report.md` using the `report
 | `mcp.json`      | MCP server config |
 | `.env`          | LLM endpoint and settings (copy from `.env.example`, never commit it) |
 | `workspace/`    | The only folder the agent can read and write |
+
+## Code layout
+
+```
+micro_agent/
+├── cli.py          # argument parsing, exit codes
+├── config.py       # Settings (from .env, env vars, CLI flags), ConfigError
+├── agent.py        # MicroAgent: builds the deep agent and runs it
+├── llm.py          # ModelFactory: ChatOpenAI for the configured endpoint
+├── skills.py       # SkillCatalog: validates skills/, mounted read-only at /skills/
+├── subagents.py    # SubAgentLoader: agents/*.md -> deepagents SubAgent specs
+├── mcp_servers.py  # McpToolLoader: mcp.json -> LangChain tools
+├── streaming.py    # RunPrinter: streams the run, logs tool calls per agent
+├── markdown.py     # YAML frontmatter parsing
+└── console.py      # stderr logging helpers
+```
+
+You can also run it as a module (`uv run python -m micro_agent`) or use it from Python:
+
+```python
+import asyncio
+from micro_agent import MicroAgent, Settings
+from micro_agent.cli import parse_args
+
+result = asyncio.run(MicroAgent(Settings.load(parse_args([]))).run())
+```
 
 ## Configuration (`.env`)
 

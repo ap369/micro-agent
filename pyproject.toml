@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "One-shot deep agent (LangChain deepagents): goal + prompt, skills, sub-agents, MCP servers and a sandboxed workspace"
 requires-python = ">=3.11"
 dependencies = [
-    "deepagents>=0.7.38",
+    "deepagents>=0.7.38,<0.8",
     "langchain>=1.5",
     "langchain-mcp-adapters>=0.3",
     "langchain-openai>=1.7",
@@ -18,3 +18,11 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,11 +1,11 @@
-"""Settings from .env, environment variables and CLI overrides."""
+"""Settings from environment variables, with optional overrides.
+
+Loading a `.env` file is the caller's job (run.py does it), so this module never mutates `os.environ`.
+"""
 
 import os
-from argparse import Namespace
 from dataclasses import dataclass
 from pathlib import Path
-
-from dotenv import load_dotenv
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
@@ -16,10 +16,11 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class Settings:
-    # LLM (OpenAI-compatible endpoint)
-    base_url: str
-    api_key: str
+    # LLM — any provider supported by LangChain's `init_chat_model`
+    provider: str
     model: str
+    base_url: str | None
+    api_key: str | None
     temperature: float
     max_steps: int
     # inputs
@@ -31,31 +32,44 @@ class Settings:
     workspace: Path
 
     @classmethod
-    def load(cls, args: Namespace) -> "Settings":
-        """Load .env, then build settings; CLI flags win over env vars, env vars over defaults."""
-        load_dotenv(_resolve(args.env) if args.env else PROJECT_DIR / ".env")
+    def load(
+        cls,
+        *,
+        goal: str | Path | None = None,
+        prompt: str | Path | None = None,
+        mcp_config: str | Path | None = None,
+        skills_dir: str | Path | None = None,
+        agents_dir: str | Path | None = None,
+        workspace: str | Path | None = None,
+    ) -> "Settings":
+        """Build settings from env vars; arguments override the matching env var / default.
+
+        Relative paths are resolved against the project folder.
+        """
         return cls(
-            base_url=_require_env("OPENAI_BASE_URL"),
-            api_key=_require_env("OPENAI_API_KEY"),
+            provider=os.getenv("LLM_PROVIDER", "openai"),
             model=_require_env("LLM_MODEL"),
+            # OPENAI_* names are still accepted for backwards compatibility
+            base_url=os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or None,
+            api_key=os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or None,
             temperature=_env_number("LLM_TEMPERATURE", "0", float),
             max_steps=_env_number("MAX_STEPS", "50", int),
-            goal=_read_text(_path(args.goal, "GOAL_FILE", "goal.md"), "Goal"),
-            prompt=_read_text(_path(args.prompt, "PROMPT_FILE", "prompt.md"), "Prompt"),
-            mcp_config=_path(args.mcp, "MCP_CONFIG", "mcp.json"),
-            skills_dir=_path(args.skills, "SKILLS_DIR", "skills"),
-            agents_dir=_path(args.agents, "AGENTS_DIR", "agents"),
-            workspace=_path(None, "WORKSPACE_DIR", "workspace"),
+            goal=_read_text(_path(goal, "GOAL_FILE", "goal.md"), "Goal"),
+            prompt=_read_text(_path(prompt, "PROMPT_FILE", "prompt.md"), "Prompt"),
+            mcp_config=_path(mcp_config, "MCP_CONFIG", "mcp.json"),
+            skills_dir=_path(skills_dir, "SKILLS_DIR", "skills"),
+            agents_dir=_path(agents_dir, "AGENTS_DIR", "agents"),
+            workspace=_path(workspace, "WORKSPACE_DIR", "workspace"),
         )
 
 
-def _resolve(path: str) -> Path:
+def resolve_path(path: str | Path) -> Path:
     p = Path(path).expanduser()
     return p if p.is_absolute() else (PROJECT_DIR / p).resolve()
 
 
-def _path(cli_value: str | None, env_name: str, default: str) -> Path:
-    return _resolve(cli_value or os.getenv(env_name, default))
+def _path(override: str | Path | None, env_name: str, default: str) -> Path:
+    return resolve_path(override or os.getenv(env_name, default))
 
 
 def _require_env(name: str) -> str:

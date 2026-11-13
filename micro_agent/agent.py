@@ -3,12 +3,13 @@
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from langchain.agents.middleware import ModelCallLimitMiddleware
+from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
 from micro_agent.config import Settings
 from micro_agent.console import log
-from micro_agent.llm import ModelFactory, retry_middleware
-from micro_agent.mcp_servers import McpToolLoader
+from micro_agent.llm import ModelFactory, ToolCallRepairMiddleware
+from micro_agent.mcp_servers import McpServers
 from micro_agent.skills import SKILLS_READ_ONLY, SKILLS_ROUTE, SkillCatalog
 from micro_agent.streaming import RunPrinter
 from micro_agent.subagents import SubAgentLoader
@@ -28,19 +29,20 @@ class MicroAgent:
 
     async def run(self) -> str:
         """Build the agent, pursue the goal, save and return the final answer."""
-        agent = await self._build()
-        # backstop only; MAX_STEPS is enforced by ModelCallLimitMiddleware
-        recursion_limit = 10 * self.settings.max_steps + 100
-        result = await RunPrinter().run(agent, self.settings.goal, recursion_limit)
-        (self.settings.workspace / RESULT_FILE).write_text(result, encoding="utf-8")
+        s = self.settings
+        # MCP sessions stay open for the whole run
+        async with McpServers(s.mcp_config) as mcp_tools:
+            agent = self._build(mcp_tools)
+            # backstop only; MAX_STEPS is enforced by ModelCallLimitMiddleware
+            result = await RunPrinter().run(agent, s.goal, recursion_limit=10 * s.max_steps + 100)
+        (s.workspace / RESULT_FILE).write_text(result, encoding="utf-8")
         return result
 
-    async def _build(self) -> CompiledStateGraph:
+    def _build(self, mcp_tools: list[BaseTool]) -> CompiledStateGraph:
         s = self.settings
         s.workspace.mkdir(parents=True, exist_ok=True)
 
         skills = SkillCatalog(s.skills_dir)
-        mcp_tools = await McpToolLoader(s.mcp_config).load()
         subagents = SubAgentLoader(s.agents_dir, mcp_tools, skills, self.models, s.max_steps).load()
 
         agent = create_deep_agent(
@@ -54,7 +56,7 @@ class MicroAgent:
             # 'error' = the run fails with exit code 3 when the main agent runs out of steps
             middleware=[
                 ModelCallLimitMiddleware(run_limit=s.max_steps, exit_behavior="error"),
-                retry_middleware(),
+                ToolCallRepairMiddleware(on_failure="error"),
             ],
         )
         log(f"[main] workspace: {s.workspace}")

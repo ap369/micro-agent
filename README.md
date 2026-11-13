@@ -2,7 +2,7 @@
 
 A one-shot agent built on LangChain's [`deepagents`](https://docs.langchain.com/oss/python/deepagents/overview) harness. You give it a **goal**, a **prompt**, **skills**, **sub-agents**, and a list of **MCP servers**. When you run it, it connects to everything, does the job, and exits.
 
-- Works with any **OpenAI-compatible** LLM endpoint (base URL + API key + model name)
+- Works with any LLM provider LangChain supports (`init_chat_model`), including any **OpenAI-compatible** endpoint such as Groq
 - **Skills** ([Agent Skills](https://agentskills.io) format): only names and descriptions go in the prompt; the agent reads a skill's full instructions when it needs them
 - **Agents**: specialised sub-agents the main agent can hand tasks to (via `deepagents`' `task` tool), each with its own prompt, tools and model
 - Connects to MCP servers (stdio, streamable HTTP, SSE) from a `mcp.json` file
@@ -26,7 +26,7 @@ mcp.json ────────────┘
   ```bash
   curl -LsSf https://astral.sh/uv/install.sh | sh
   ```
-- An OpenAI-compatible endpoint whose model supports **tool calling**
+- An LLM whose model supports **tool calling** (OpenAI-compatible endpoint, Anthropic, Ollama, ...)
 - Node.js / `uvx` only if the MCP servers you configure need them
 
 ## Quick start
@@ -41,8 +41,8 @@ uv sync
 # 2. Configure the LLM
 cp .env.example .env
 #    then edit .env:
-#    OPENAI_BASE_URL=https://your-endpoint/v1
-#    OPENAI_API_KEY=sk-...
+#    LLM_BASE_URL=https://your-endpoint/v1
+#    LLM_API_KEY=sk-...
 #    LLM_MODEL=your-model-name
 
 # 3. Describe the task
@@ -77,35 +77,38 @@ The sample `goal.md` has the agent write `workspace/report.md` using the `report
 ```
 run.py              # entry point: CLI options, exit codes -> MicroAgent
 micro_agent/
-├── config.py       # Settings (from .env, env vars, CLI flags), ConfigError
+├── config.py       # Settings (env vars + keyword overrides), ConfigError
 ├── agent.py        # MicroAgent: builds the deep agent and runs it
-├── llm.py          # ModelFactory: ChatOpenAI for the configured endpoint
+├── llm.py          # ModelFactory (init_chat_model), ToolCallRepairMiddleware
 ├── skills.py       # SkillCatalog: validates skills/, mounted read-only at /skills/
 ├── subagents.py    # SubAgentLoader: agents/*.md -> deepagents SubAgent specs
-├── mcp_servers.py  # McpToolLoader: mcp.json -> LangChain tools
+├── mcp_servers.py  # McpServers: mcp.json -> LangChain tools, one session per server
 ├── streaming.py    # RunPrinter: streams the run, logs tool calls per agent
 ├── markdown.py     # YAML frontmatter parsing
 └── console.py      # stderr logging helpers
+tests/              # pytest suite (uv run pytest)
 ```
 
 You can also use it from Python:
 
 ```python
 import asyncio
-from argparse import Namespace
+from dotenv import load_dotenv
 from micro_agent import MicroAgent, Settings
 
-args = Namespace(goal=None, prompt=None, env=None, mcp=None, skills=None, agents=None)  # None = defaults
-result = asyncio.run(MicroAgent(Settings.load(args)).run())
+load_dotenv()  # Settings reads the environment; loading .env is up to you
+settings = Settings.load(goal="goals/report.md")  # any argument left out uses its env var / default
+result = asyncio.run(MicroAgent(settings).run())
 ```
 
 ## Configuration (`.env`)
 
 | Variable          | Required | Default      | Description |
 |-------------------|----------|--------------|-------------|
-| `OPENAI_BASE_URL` | yes      |              | OpenAI-compatible endpoint, e.g. `https://host/v1` |
-| `OPENAI_API_KEY`  | yes      |              | API key |
-| `LLM_MODEL`       | yes      |              | Model name |
+| `LLM_PROVIDER`    | no       | `openai`     | Any `init_chat_model` provider: `openai` (also for OpenAI-compatible endpoints), `anthropic`, `ollama`, ... Providers other than `openai` need their package, e.g. `uv add langchain-ollama` |
+| `LLM_BASE_URL`    | no       |              | Custom endpoint, e.g. `https://api.groq.com/openai/v1` (`OPENAI_BASE_URL` also works) |
+| `LLM_API_KEY`     | no       |              | API key; if unset, the provider's own variable is used, e.g. `ANTHROPIC_API_KEY` (`OPENAI_API_KEY` also works) |
+| `LLM_MODEL`       | yes      |              | Model name, e.g. `openai/gpt-oss-120b` |
 | `LLM_TEMPERATURE` | no       | `0`          | Sampling temperature |
 | `GOAL_FILE`       | no       | `goal.md`    | Goal file |
 | `PROMPT_FILE`     | no       | `prompt.md`  | Prompt file |
@@ -134,6 +137,7 @@ Same format as Claude Desktop / Cursor:
 ```
 
 - `command` (+ `args`, `env`, `cwd`) starts a local **stdio** server
+- Each server is connected **once per run** and the session is kept open, so stateful servers (browser, database) keep their state between tool calls
 - `url` (+ `headers`) connects over **streamable HTTP**; add `"transport": "sse"` for SSE servers
 - `${VAR}` placeholders are filled from your environment / `.env`, so secrets stay out of `mcp.json`. An unset variable is a config error (exit code 2)
 - stdio servers only get a minimal environment (`PATH`, `HOME`, ...) plus their own `env`; your `.env` secrets are never passed to them
@@ -186,7 +190,7 @@ You are a strict but fair editor. ...
 ```
 
 - Each file becomes a `deepagents` `SubAgent`. The main agent sees every agent's name and description and calls `task(subagent_type, description)` to hand over a task. It gets the sub-agent's final answer back.
-- `deepagents` also adds a built-in **`general-purpose`** sub-agent with the same tools as the main agent, which it can use to isolate big sub-tasks.
+- A built-in **`general-purpose`** sub-agent (from `deepagents`) is always available, with the same tools as the main agent, for isolating big sub-tasks. Add `agents/general-purpose.md` to replace it.
 - Sub-agents **don't see the main conversation**, so the task text must be self-contained. They share the workspace, so files are how agents pass work to each other.
 - Sub-agents can't call `task` themselves, so they can't call each other in a loop.
 - File tools are always available to sub-agents. `tools` only chooses which **MCP** tools a sub-agent gets; an unknown name is a config error.
@@ -235,14 +239,15 @@ So `uv run run.py > answer.md` captures only the answer.
 - **The agent never calls tools**: your model or endpoint probably doesn't support OpenAI-style tool calling. Try another model.
 - **`[mcp] WARNING: failed to load server ...`**: check that the command is installed and on your `PATH`, or that the URL and headers are right.
 - **Stops with exit code 3**: raise `MAX_STEPS` or make the goal more specific.
-- **`tool_use_failed` (400)**: the model produced a malformed tool call and the provider (e.g. Groq) rejected it. Failed model calls are retried up to 3 times (`ModelRetryMiddleware`), which usually fixes it. Rate limits, timeouts and 5xx errors are retried the same way.
+- **`tool_use_failed` (400)**: the model produced a malformed tool call and the provider (e.g. Groq) rejected it. The model is shown its rejected call and asked to fix it, up to 2 times. If a sub-agent still fails, the error goes back to the main agent; if the main agent still fails, the run exits with code 1. Rate limits, timeouts and 5xx errors are retried by the provider's SDK.
 - **`Rate limit reached ... tokens per day` (429)**: your provider's daily quota is used up. Wait until it resets, use a smaller model, or upgrade your plan.
 
 ## Development
 
-Lint and format settings live in `pyproject.toml`:
-
 ```bash
-uvx ruff check .
-uvx ruff format .
+uv run pytest        # tests: scripted fake models and a fake OpenAI server, no API key or network needed
+uvx ruff check .     # lint
+uvx ruff format .    # format
 ```
+
+`deepagents` is pinned below `0.8` because it is pre-1.0 and its API still changes; bump it deliberately and re-run the tests.

@@ -3,35 +3,52 @@
 import json
 import os
 import re
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp.client.stdio import get_default_environment
 
 from micro_agent.config import ConfigError
 from micro_agent.console import log
 
 
-class McpToolLoader:
+class McpServers:
+    """Connects to every enabled server for the duration of an `async with` block.
+
+    Each server keeps one session for the whole run, so stateful servers (browsers, databases)
+    keep their state between tool calls and stdio servers are started only once.
+
+        async with McpServers(path) as tools:
+            ...
+    """
+
     def __init__(self, config_path: Path):
         self.config_path = config_path
+        self._stack = AsyncExitStack()
 
-    async def load(self) -> list[BaseTool]:
-        """Connect to every enabled server; a server that fails is logged and skipped."""
+    async def __aenter__(self) -> list[BaseTool]:
         connections = self._connections()
-        if not connections:
-            return []
         client = MultiServerMCPClient(connections)
         tools: list[BaseTool] = []
         for name in connections:
+            server = AsyncExitStack()  # so a server that fails half-way is fully closed
             try:
-                server_tools = await client.get_tools(server_name=name)
-                tools.extend(server_tools)
-                log(f"[mcp] {name}: {len(server_tools)} tool(s) — {', '.join(t.name for t in server_tools)}")
+                session = await server.enter_async_context(client.session(name))
+                server_tools = await load_mcp_tools(session, server_name=name)
             except Exception as e:
+                await _close_quietly(server, name)
                 log(f"[mcp] WARNING: failed to load server '{name}': {e!r}")
+                continue
+            self._stack.push_async_exit(server)
+            tools.extend(server_tools)
+            log(f"[mcp] {name}: {len(server_tools)} tool(s) — {', '.join(t.name for t in server_tools)}")
         return tools
+
+    async def __aexit__(self, *exc_info) -> None:
+        await self._stack.__aexit__(*exc_info)
 
     def _connections(self) -> dict[str, dict]:
         if not self.config_path.is_file():
@@ -86,3 +103,10 @@ def _to_connection(name: str, cfg: dict) -> dict:
             conn["headers"] = cfg["headers"]
         return conn
     raise ConfigError(f"MCP server '{name}' needs either 'command' or 'url'")
+
+
+async def _close_quietly(stack: AsyncExitStack, name: str) -> None:
+    try:
+        await stack.aclose()
+    except Exception as e:  # the server already failed; don't hide that error behind a cleanup one
+        log(f"[mcp] WARNING: error while closing server '{name}': {e!r}")

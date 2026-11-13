@@ -11,7 +11,6 @@ class RunPrinter:
     """Runs the agent with `subgraphs=True` and tags each log line with the agent that produced it."""
 
     def __init__(self):
-        self._pending: list[str] = []  # sub-agents requested via `task`, in call order
         self._labels: dict[str, str] = {}  # subgraph namespace -> sub-agent name
         self._final: AIMessage | None = None
 
@@ -28,25 +27,23 @@ class RunPrinter:
 
     def _handle(self, namespace: tuple, update: dict) -> None:
         is_main = not namespace
-        label = "main" if is_main else self._label_for(namespace[0])
         for node in update.values():
             if not isinstance(node, dict):
                 continue
             for msg in node.get("messages") or []:
                 if isinstance(msg, AIMessage):
+                    # sub-agent replies carry the sub-agent's name; its tool results don't,
+                    # so remember the name per subgraph
+                    if not is_main and msg.name:
+                        self._labels[namespace[0]] = msg.name
+                    label = self._label(namespace)
                     for call in msg.tool_calls:
-                        if is_main and call["name"] == "task":
-                            self._pending.append(call["args"].get("subagent_type", "subagent"))
                         args = truncate(json.dumps(call["args"], ensure_ascii=False))
                         log(f"[{label}] tool → {call['name']}({args})")
                     if is_main and not msg.tool_calls:
                         self._final = msg
                 elif isinstance(msg, ToolMessage):
-                    log(f"[{label}] tool ← {msg.name}: {truncate(msg.content)}")
+                    log(f"[{self._label(namespace)}] tool ← {msg.name}: {truncate(msg.content)}")
 
-    def _label_for(self, namespace: str) -> str:
-        # deepagents doesn't expose which `task` call a subgraph belongs to,
-        # so new subgraphs are matched to pending `task` calls in order
-        if namespace not in self._labels:
-            self._labels[namespace] = self._pending.pop(0) if self._pending else "subagent"
-        return self._labels[namespace]
+    def _label(self, namespace: tuple) -> str:
+        return self._labels.get(namespace[0], "subagent") if namespace else "main"

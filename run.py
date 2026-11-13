@@ -8,10 +8,12 @@ import asyncio
 import sys
 from enum import IntEnum
 
+from dotenv import load_dotenv
 from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
 from langgraph.errors import GraphRecursionError
 
 from micro_agent import ConfigError, MicroAgent, Settings
+from micro_agent.config import resolve_path
 from micro_agent.console import log
 
 
@@ -38,8 +40,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> ExitCode:
     args = parse_args(argv)
+    # variables already set in the environment win over the .env file
+    load_dotenv(resolve_path(args.env or ".env"))
     try:
-        print(asyncio.run(MicroAgent(Settings.load(args)).run()))
+        settings = Settings.load(
+            goal=args.goal,
+            prompt=args.prompt,
+            mcp_config=args.mcp,
+            skills_dir=args.skills,
+            agents_dir=args.agents,
+        )
+        print(asyncio.run(MicroAgent(settings).run()))
     except ConfigError as e:
         log(f"[config] {e}")
         return ExitCode.CONFIG

@@ -1,9 +1,10 @@
 # micro-agent
 
-A one-shot LangChain agent. You give it a **goal**, a **prompt**, a folder of **knowledge** (markdown), and a list of **MCP servers**. When you run it, it connects to everything, does the job, and exits.
+A one-shot LangChain agent. You give it a **goal**, a **prompt**, **skills**, **sub-agents**, and a list of **MCP servers**. When you run it, it connects to everything, does the job, and exits.
 
 - Works with any **OpenAI-compatible** LLM endpoint (base URL + API key + model name)
-- Loads every `knowledge/**/*.md` into its instructions at startup
+- **Skills** (Claude-style): only names and descriptions go in the prompt; the agent loads a skill's full instructions when it needs them
+- **Agents**: specialised sub-agents the main agent can hand tasks to, each with its own prompt, tools and model
 - Connects to MCP servers (stdio, streamable HTTP, SSE) from a `mcp.json` file
 - Can read and write files, but **only inside `workspace/`**
 
@@ -11,11 +12,12 @@ A one-shot LangChain agent. You give it a **goal**, a **prompt**, a folder of **
 
 ```
 goal.md ─────────────┐
-prompt.md ───────────┤
-knowledge/*.md ──────┼──► agent (LangChain) ──► tools ──► workspace/ (files)
-.env (LLM config) ───┤                            └──► MCP servers
+prompt.md ───────────┤                      ┌──► file tools ──► workspace/
+skills/*/SKILL.md ───┼──► main agent ──────┼──► load_skill / read_skill_file ──► skills/
+agents/*.md ─────────┤                      ├──► MCP servers
+.env (LLM config) ───┤                      └──► delegate ──► sub-agent (own prompt, tools, model)
 mcp.json ────────────┘
-                                   final answer ──► stdout + workspace/_result.md
+                              final answer ──► stdout + workspace/_result.md
 ```
 
 ## Prerequisites
@@ -46,7 +48,8 @@ cp .env.example .env
 # 3. Describe the task
 #    edit goal.md     -> what to accomplish
 #    edit prompt.md   -> how the agent should behave
-#    add .md files to knowledge/
+#    add skills to skills/<name>/SKILL.md
+#    add sub-agents to agents/<name>.md
 
 # 4. (optional) add MCP servers to mcp.json
 
@@ -54,7 +57,7 @@ cp .env.example .env
 uv run agent.py
 ```
 
-The sample `goal.md` asks the agent to summarise the knowledge base into `workspace/summary.md`, so you can run it straight after setting up `.env`.
+The sample `goal.md` has the agent write `workspace/report.md` using the `report-writing` skill, then hand it to the `reviewer` sub-agent, which writes `workspace/review.md`. You can run it straight after setting up `.env`.
 
 ## Project files
 
@@ -63,7 +66,8 @@ The sample `goal.md` asks the agent to summarise the knowledge base into `worksp
 | `agent.py`      | The script |
 | `goal.md`       | The task, sent as the user message |
 | `prompt.md`     | System instructions / persona |
-| `knowledge/`    | Markdown files loaded at startup (recursive) |
+| `skills/`       | One folder per skill, each with a `SKILL.md` and optional supporting files |
+| `agents/`       | One `.md` file per sub-agent |
 | `mcp.json`      | MCP server config |
 | `.env`          | LLM endpoint and settings (copy from `.env.example`, never commit it) |
 | `workspace/`    | The only folder the agent can read and write |
@@ -79,7 +83,8 @@ The sample `goal.md` asks the agent to summarise the knowledge base into `worksp
 | `GOAL_FILE`       | no       | `goal.md`    | Goal file |
 | `PROMPT_FILE`     | no       | `prompt.md`  | Prompt file |
 | `MCP_CONFIG`      | no       | `mcp.json`   | MCP config file |
-| `KNOWLEDGE_DIR`   | no       | `knowledge`  | Knowledge folder |
+| `SKILLS_DIR`      | no       | `skills`     | Skills folder |
+| `AGENTS_DIR`      | no       | `agents`     | Sub-agents folder |
 | `WORKSPACE_DIR`   | no       | `workspace`  | Sandboxed read/write folder |
 | `MAX_STEPS`       | no       | `50`         | Max tool rounds (model call + tool call) before it gives up |
 
@@ -108,6 +113,54 @@ Same format as Claude Desktop / Cursor:
 - `"disabled": true` skips a server
 - A server that fails to start prints a warning and is skipped. The run continues.
 
+## Skills (`skills/`)
+
+A skill is a folder with a `SKILL.md` file and, optionally, supporting files (templates, references, examples):
+
+```
+skills/
+  report-writing/
+    SKILL.md
+    template.md
+```
+
+```markdown
+---
+name: report-writing          # optional, defaults to the folder name
+description: Write a short, structured markdown report on any topic.   # required
+---
+
+# Report writing
+1. Read `template.md` with `read_skill_file` and follow its structure.
+2. ...
+```
+
+- Only the `name` and `description` of each skill go into the system prompt, so having many skills costs few tokens.
+- When a task matches a skill, the agent calls `load_skill(name)` to get the full body and the list of supporting files, then `read_skill_file(name, path)` to read those files.
+- Skill folders are read-only for the agent, and `read_skill_file` can't leave the skill's folder.
+
+## Agents (`agents/`)
+
+Each `.md` file is a sub-agent. Its frontmatter is the configuration and its body is the sub-agent's system prompt:
+
+```markdown
+---
+name: reviewer                       # optional, defaults to the file name
+description: Reviews a document in the workspace and writes feedback.   # required
+tools: [read_file, write_file]       # optional, defaults to all file, skill and MCP tools
+model: openai/gpt-oss-20b            # optional, defaults to LLM_MODEL (same endpoint/key)
+max_steps: 20                        # optional, defaults to MAX_STEPS
+---
+
+You are a strict but fair editor. ...
+```
+
+- The main agent sees each agent's name and description and calls `delegate(agent, task)` to hand over a task. It gets the sub-agent's final answer back.
+- Sub-agents **don't see the main conversation**, so the task text must be self-contained. They share `workspace/`, so files are how agents pass work to each other.
+- Sub-agents can't delegate further, so they can't call each other in a loop.
+- `tools` can list any built-in tool (`list_files`, `read_file`, `write_file`, `append_file`, `delete_file`, `load_skill`, `read_skill_file`) or MCP tool by name. An unknown name is a config error. A sub-agent gets skills only if it has `load_skill`.
+- If a sub-agent fails or hits its step limit, `delegate` returns the error to the main agent and the run continues.
+
 ## Built-in file tools
 
 All file paths are relative to `workspace/`. Anything outside it (`../`, absolute paths, symlink escapes) is refused.
@@ -125,12 +178,13 @@ All file paths are relative to `workspace/`. Anything outside it (`../`, absolut
 Override any input from the command line:
 
 ```bash
-uv run agent.py --goal goals/report.md --prompt prompts/analyst.md --mcp mcp.prod.json --env .env.prod
+uv run agent.py --goal goals/report.md --prompt prompts/analyst.md --mcp mcp.prod.json --env .env.prod \
+    --skills skills-prod --agents agents-prod
 ```
 
 ## Output and exit codes
 
-- Progress (MCP connections, every tool call and result) is printed to **stderr**
+- Progress (MCP connections, every tool call and result) is printed to **stderr**, tagged `[main]` or with the sub-agent's name, e.g. `[reviewer]`
 - The final answer is printed to **stdout** and saved to `workspace/_result.md`
 
 So `uv run agent.py > answer.md` captures only the answer.
@@ -139,7 +193,7 @@ So `uv run agent.py > answer.md` captures only the answer.
 |------|---------|
 | `0`  | Success |
 | `1`  | Runtime / LLM error |
-| `2`  | Configuration error (missing file or env var, bad JSON) |
+| `2`  | Configuration error (missing file or env var, bad JSON, invalid skill/agent frontmatter, unknown tool name) |
 | `3`  | `MAX_STEPS` reached before finishing |
 
 ## Troubleshooting

@@ -8,4 +8,5 @@ dependencies = [
     "langchain-openai>=0.3",
     "langchain-mcp-adapters>=0.1",
     "python-dotenv>=1.0",
+    "pyyaml>=6.0",
 ]

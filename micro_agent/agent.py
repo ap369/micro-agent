@@ -7,7 +7,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from micro_agent.config import Settings
 from micro_agent.console import log
-from micro_agent.llm import ModelFactory
+from micro_agent.llm import ModelFactory, retry_middleware
 from micro_agent.mcp_servers import McpToolLoader
 from micro_agent.skills import SKILLS_READ_ONLY, SKILLS_ROUTE, SkillCatalog
 from micro_agent.streaming import RunPrinter
@@ -52,7 +52,10 @@ class MicroAgent:
             backend=self._backend(skills),
             permissions=[SKILLS_READ_ONLY],
             # 'error' = the run fails with exit code 3 when the main agent runs out of steps
-            middleware=[ModelCallLimitMiddleware(run_limit=s.max_steps, exit_behavior="error")],
+            middleware=[
+                ModelCallLimitMiddleware(run_limit=s.max_steps, exit_behavior="error"),
+                retry_middleware(),
+            ],
         )
         log(f"[main] workspace: {s.workspace}")
         return agent

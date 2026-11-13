@@ -8,7 +8,7 @@ from langchain_core.tools import BaseTool
 
 from micro_agent.config import ConfigError
 from micro_agent.console import log
-from micro_agent.llm import ModelFactory
+from micro_agent.llm import ModelFactory, retry_middleware
 from micro_agent.markdown import parse_frontmatter
 from micro_agent.skills import SKILLS_READ_ONLY, SkillCatalog
 
@@ -60,7 +60,7 @@ class SubAgentLoader:
             "description": description,
             "system_prompt": body,
             "permissions": self._permissions(meta),
-            "middleware": [self._step_limit(meta, path)],
+            "middleware": [self._step_limit(meta, path), retry_middleware()],
         }
         if (tools := self._tools(meta, name, path)) is not None:
             spec["tools"] = tools

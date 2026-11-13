@@ -234,6 +234,8 @@ So `uv run run.py > answer.md` captures only the answer.
 - **The agent never calls tools**: your model or endpoint probably doesn't support OpenAI-style tool calling. Try another model.
 - **`[mcp] WARNING: failed to load server ...`**: check that the command is installed and on your `PATH`, or that the URL and headers are right.
 - **Stops with exit code 3**: raise `MAX_STEPS` or make the goal more specific.
+- **`tool_use_failed` (400)**: the model produced a malformed tool call and the provider (e.g. Groq) rejected it. Failed model calls are retried up to 3 times (`ModelRetryMiddleware`), which usually fixes it. Rate limits, timeouts and 5xx errors are retried the same way.
+- **`Rate limit reached ... tokens per day` (429)**: your provider's daily quota is used up. Wait until it resets, use a smaller model, or upgrade your plan.
 
 ## Development
 

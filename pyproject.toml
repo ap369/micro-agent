@@ -4,9 +4,10 @@ version = "0.1.0"
 description = "One-shot LangChain agent with MCP tools, sandboxed file access and a markdown knowledge base"
 requires-python = ">=3.11"
 dependencies = [
-    "langchain>=1.0",
+    "langchain>=1.5",
     "langchain-openai>=0.3",
     "langchain-mcp-adapters>=0.1",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
+    "deepagents>=0.7.38",
 ]

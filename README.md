@@ -1,10 +1,10 @@
 # micro-agent
 
-A one-shot LangChain agent. You give it a **goal**, a **prompt**, **skills**, **sub-agents**, and a list of **MCP servers**. When you run it, it connects to everything, does the job, and exits.
+A one-shot agent built on LangChain's [`deepagents`](https://docs.langchain.com/oss/python/deepagents/overview) harness. You give it a **goal**, a **prompt**, **skills**, **sub-agents**, and a list of **MCP servers**. When you run it, it connects to everything, does the job, and exits.
 
 - Works with any **OpenAI-compatible** LLM endpoint (base URL + API key + model name)
-- **Skills** (Claude-style): only names and descriptions go in the prompt; the agent loads a skill's full instructions when it needs them
-- **Agents**: specialised sub-agents the main agent can hand tasks to, each with its own prompt, tools and model
+- **Skills** ([Agent Skills](https://agentskills.io) format): only names and descriptions go in the prompt; the agent reads a skill's full instructions when it needs them
+- **Agents**: specialised sub-agents the main agent can hand tasks to (via `deepagents`' `task` tool), each with its own prompt, tools and model
 - Connects to MCP servers (stdio, streamable HTTP, SSE) from a `mcp.json` file
 - Can read and write files, but **only inside `workspace/`**
 
@@ -12,10 +12,10 @@ A one-shot LangChain agent. You give it a **goal**, a **prompt**, **skills**, **
 
 ```
 goal.md ─────────────┐
-prompt.md ───────────┤                      ┌──► file tools ──► workspace/
-skills/*/SKILL.md ───┼──► main agent ──────┼──► load_skill / read_skill_file ──► skills/
-agents/*.md ─────────┤                      ├──► MCP servers
-.env (LLM config) ───┤                      └──► delegate ──► sub-agent (own prompt, tools, model)
+prompt.md ───────────┤                      ┌──► file tools ──► /          = workspace/
+skills/*/SKILL.md ───┼──► main agent ──────┤                  /skills/   = skills/ (read-only)
+agents/*.md ─────────┤   (create_deep_agent)├──► MCP servers
+.env (LLM config) ───┤                      └──► task ──► sub-agent (own prompt, tools, model)
 mcp.json ────────────┘
                               final answer ──► stdout + workspace/_result.md
 ```
@@ -86,7 +86,7 @@ The sample `goal.md` has the agent write `workspace/report.md` using the `report
 | `SKILLS_DIR`      | no       | `skills`     | Skills folder |
 | `AGENTS_DIR`      | no       | `agents`     | Sub-agents folder |
 | `WORKSPACE_DIR`   | no       | `workspace`  | Sandboxed read/write folder |
-| `MAX_STEPS`       | no       | `50`         | Max tool rounds (model call + tool call) before it gives up |
+| `MAX_STEPS`       | no       | `50`         | Max model calls for the main agent (and default for sub-agents) before it gives up |
 
 Relative paths are resolved from the project folder.
 
@@ -126,18 +126,19 @@ skills/
 
 ```markdown
 ---
-name: report-writing          # optional, defaults to the folder name
+name: report-writing          # required
 description: Write a short, structured markdown report on any topic.   # required
 ---
 
 # Report writing
-1. Read `template.md` with `read_skill_file` and follow its structure.
+1. Read `template.md` (next to this file) with `read_file` and follow its structure.
 2. ...
 ```
 
-- Only the `name` and `description` of each skill go into the system prompt, so having many skills costs few tokens.
-- When a task matches a skill, the agent calls `load_skill(name)` to get the full body and the list of supporting files, then `read_skill_file(name, path)` to read those files.
-- Skill folders are read-only for the agent, and `read_skill_file` can't leave the skill's folder.
+- Skills are handled by `deepagents`' `SkillsMiddleware`. Only each skill's `name` and `description` (plus its path) go into the system prompt, so having many skills costs few tokens.
+- When a task matches a skill, the agent reads `/skills/<name>/SKILL.md` and any supporting files with the normal `read_file` tool.
+- `skills/` is mounted read-only at `/skills/`: writes there are denied.
+- A skill with no `name` or `description`, or two skills with the same name, is a config error (exit code 2).
 
 ## Agents (`agents/`)
 
@@ -147,31 +148,37 @@ Each `.md` file is a sub-agent. Its frontmatter is the configuration and its bod
 ---
 name: reviewer                       # optional, defaults to the file name
 description: Reviews a document in the workspace and writes feedback.   # required
-tools: [read_file, write_file]       # optional, defaults to all file, skill and MCP tools
 model: openai/gpt-oss-20b            # optional, defaults to LLM_MODEL (same endpoint/key)
 max_steps: 20                        # optional, defaults to MAX_STEPS
+tools: [fetch]                       # optional, MCP tools to give it; defaults to all MCP tools
+skills: true                         # optional, set false to hide skills from this agent
+read_only: false                     # optional, true = it can read but not write files
 ---
 
 You are a strict but fair editor. ...
 ```
 
-- The main agent sees each agent's name and description and calls `delegate(agent, task)` to hand over a task. It gets the sub-agent's final answer back.
-- Sub-agents **don't see the main conversation**, so the task text must be self-contained. They share `workspace/`, so files are how agents pass work to each other.
-- Sub-agents can't delegate further, so they can't call each other in a loop.
-- `tools` can list any built-in tool (`list_files`, `read_file`, `write_file`, `append_file`, `delete_file`, `load_skill`, `read_skill_file`) or MCP tool by name. An unknown name is a config error. A sub-agent gets skills only if it has `load_skill`.
-- If a sub-agent fails or hits its step limit, `delegate` returns the error to the main agent and the run continues.
+- Each file becomes a `deepagents` `SubAgent`. The main agent sees every agent's name and description and calls `task(subagent_type, description)` to hand over a task. It gets the sub-agent's final answer back.
+- `deepagents` also adds a built-in **`general-purpose`** sub-agent with the same tools as the main agent, which it can use to isolate big sub-tasks.
+- Sub-agents **don't see the main conversation**, so the task text must be self-contained. They share the workspace, so files are how agents pass work to each other.
+- Sub-agents can't call `task` themselves, so they can't call each other in a loop.
+- File tools are always available to sub-agents. `tools` only chooses which **MCP** tools a sub-agent gets; an unknown name is a config error.
+- If a sub-agent hits its `max_steps`, it stops and returns a notice to the main agent. The run continues.
 
 ## Built-in file tools
 
-All file paths are relative to `workspace/`. Anything outside it (`../`, absolute paths, symlink escapes) is refused.
+These come from `deepagents`' `FilesystemMiddleware` on top of a `FilesystemBackend`. Paths are absolute inside a virtual filesystem: `/` is `workspace/`, and `/skills/` is the skills folder (read-only). Path traversal (`..`) and anything outside these folders is refused.
 
-| Tool          | What it does |
-|---------------|--------------|
-| `list_files`  | Recursive listing of a workspace folder |
-| `read_file`   | Read a text file |
-| `write_file`  | Create or overwrite a file (creates parent folders) |
-| `append_file` | Append to a file |
-| `delete_file` | Delete a file |
+| Tool         | What it does |
+|--------------|--------------|
+| `ls`         | List a folder |
+| `read_file`  | Read a file (supports line offset/limit) |
+| `write_file` | Create or overwrite a file |
+| `edit_file`  | Replace text inside a file |
+| `glob`       | Find files by pattern |
+| `grep`       | Search file contents |
+| `delete`     | Delete a file |
+| `task`       | Hand a task to a sub-agent (main agent only) |
 
 ## Running several setups
 

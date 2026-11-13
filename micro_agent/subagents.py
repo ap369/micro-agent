@@ -9,6 +9,7 @@ from langchain_core.tools import BaseTool
 
 from micro_agent.config import ConfigError
 from micro_agent.console import log
+from micro_agent.filesystem import filesystem_prompt
 from micro_agent.llm import ModelFactory, ToolCallRepairMiddleware
 from micro_agent.markdown import parse_frontmatter
 from micro_agent.skills import SKILLS_READ_ONLY, SkillCatalog
@@ -69,7 +70,7 @@ class SubAgentLoader:
         spec: SubAgent = {
             "name": name,
             "description": description,
-            "system_prompt": prompt,
+            "system_prompt": f"{prompt}\n\n{filesystem_prompt(self._skills)}",
             "permissions": self._permissions(meta),
             "middleware": [
                 self._step_limit(meta, source),

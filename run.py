@@ -35,6 +35,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mcp", help="MCP config (default: $MCP_CONFIG or mcp.json)")
     parser.add_argument("--skills", help="skills dir (default: $SKILLS_DIR or skills)")
     parser.add_argument("--agents", help="agents dir (default: $AGENTS_DIR or agents)")
+    parser.add_argument("--output", help="also save the final answer to this file")
     return parser.parse_args(argv)
 
 
@@ -50,7 +51,12 @@ def main(argv: list[str] | None = None) -> ExitCode:
             skills_dir=args.skills,
             agents_dir=args.agents,
         )
-        print(asyncio.run(MicroAgent(settings).run()))
+        result = asyncio.run(MicroAgent(settings).run())
+        if args.output:
+            output = resolve_path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(result, encoding="utf-8")
+        print(result)
     except ConfigError as e:
         log(f"[config] {e}")
         return ExitCode.CONFIG

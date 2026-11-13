@@ -17,7 +17,7 @@ skills/*/SKILL.md ───┼──► main agent ──────┤        
 agents/*.md ─────────┤   (create_deep_agent)├──► MCP servers
 .env (LLM config) ───┤                      └──► task ──► sub-agent (own prompt, tools, model)
 mcp.json ────────────┘
-                              final answer ──► stdout + workspace/_result.md
+                              final answer ──► stdout (and --output FILE)
 ```
 
 ## Prerequisites
@@ -81,6 +81,7 @@ micro_agent/
 ├── agent.py        # MicroAgent: builds the deep agent and runs it
 ├── llm.py          # ModelFactory (init_chat_model), ToolCallRepairMiddleware
 ├── skills.py       # SkillCatalog: validates skills/, mounted read-only at /skills/
+├── filesystem.py   # the agents' virtual filesystem (/ = workspace, /skills/) and its prompt
 ├── subagents.py    # SubAgentLoader: agents/*.md -> deepagents SubAgent specs
 ├── mcp_servers.py  # McpServers: mcp.json -> LangChain tools, one session per server
 ├── streaming.py    # RunPrinter: streams the run, logs tool calls per agent
@@ -223,7 +224,7 @@ uv run run.py --goal goals/report.md --prompt prompts/analyst.md --mcp mcp.prod.
 ## Output and exit codes
 
 - Progress (MCP connections, every tool call and result) is printed to **stderr**, tagged `[main]` or with the sub-agent's name, e.g. `[reviewer]`
-- The final answer is printed to **stdout** and saved to `workspace/_result.md`
+- The final answer is printed to **stdout**; add `--output answer.md` to also save it to a file (relative paths are resolved from the project folder)
 
 So `uv run run.py > answer.md` captures only the answer.
 

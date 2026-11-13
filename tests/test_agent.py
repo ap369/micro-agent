@@ -1,6 +1,6 @@
 """End-to-end runs with scripted models: skills, sub-agents, sandbox, limits and logging."""
 
-from conftest import call
+from conftest import ROOT, call
 from langchain_core.messages import AIMessage
 
 from run import ExitCode
@@ -24,7 +24,7 @@ def test_skill_subagent_flow(project, script, capsys):
     assert out.out.strip() == "All done."
     assert (project.workspace / "report.md").read_text() == "# Report"
     assert (project.workspace / "review.md").read_text() == "LGTM"
-    assert (project.workspace / "_result.md").read_text() == "All done."
+    assert not (project.workspace / "_result.md").exists()  # nothing extra leaks into the workspace
     assert "[reviewer] tool → write_file" in out.err
     assert "[main] tool ← task: approved" in out.err
 
@@ -117,3 +117,32 @@ def test_subagent_step_limit_returns_notice_to_main(project, script, monkeypatch
 
     assert project.run() == ExitCode.OK
     assert "[main] tool ← task: Model call limits exceeded" in capsys.readouterr().err
+
+
+def test_output_flag_saves_the_answer(project, script):
+    script([AIMessage("The answer.")])
+
+    assert project.run("--output", str(project.dir / "out/answer.md")) == ExitCode.OK
+    assert (project.dir / "out/answer.md").read_text() == "The answer."
+
+
+def test_filesystem_prompt_only_mentions_skills_when_there_are_some(tmp_path):
+    from micro_agent.filesystem import filesystem_prompt
+    from micro_agent.skills import SkillCatalog
+
+    assert "/skills/" not in filesystem_prompt(SkillCatalog(tmp_path / "missing"))
+    assert "/skills/" in filesystem_prompt(SkillCatalog(ROOT / "skills"))
+
+
+def test_subagents_get_the_filesystem_prompt(project):
+    from micro_agent import Settings
+    from micro_agent.llm import ModelFactory
+    from micro_agent.skills import SkillCatalog
+    from micro_agent.subagents import SubAgentLoader
+
+    settings = Settings.load(goal=project.dir / "goal.md", prompt=project.dir / "prompt.md")
+    skills = SkillCatalog(project.dir / "skills")
+    specs = SubAgentLoader(project.dir / "agents", [], skills, ModelFactory(settings), 5).load()
+
+    assert {s["name"] for s in specs} == {"reviewer", "general-purpose"}
+    assert all("# Filesystem" in s["system_prompt"] for s in specs)

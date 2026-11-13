@@ -63,7 +63,7 @@ The sample `goal.md` has the agent write `workspace/report.md` using the `report
 
 | File / folder   | Purpose |
 |-----------------|---------|
-| `run.py`        | Entry point (`uv run run.py`); the code lives in `micro_agent/` |
+| `run.py`        | Entry point: command-line options and exit codes; calls `micro_agent` |
 | `goal.md`       | The task, sent as the user message |
 | `prompt.md`     | System instructions / persona |
 | `skills/`       | One folder per skill, each with a `SKILL.md` and optional supporting files |
@@ -75,8 +75,8 @@ The sample `goal.md` has the agent write `workspace/report.md` using the `report
 ## Code layout
 
 ```
+run.py              # entry point: CLI options, exit codes -> MicroAgent
 micro_agent/
-├── cli.py          # argument parsing, exit codes
 ├── config.py       # Settings (from .env, env vars, CLI flags), ConfigError
 ├── agent.py        # MicroAgent: builds the deep agent and runs it
 ├── llm.py          # ModelFactory: ChatOpenAI for the configured endpoint
@@ -88,14 +88,15 @@ micro_agent/
 └── console.py      # stderr logging helpers
 ```
 
-You can also run it as a module (`uv run python -m micro_agent`) or use it from Python:
+You can also use it from Python:
 
 ```python
 import asyncio
+from argparse import Namespace
 from micro_agent import MicroAgent, Settings
-from micro_agent.cli import parse_args
 
-result = asyncio.run(MicroAgent(Settings.load(parse_args([]))).run())
+args = Namespace(goal=None, prompt=None, env=None, mcp=None, skills=None, agents=None)  # None = defaults
+result = asyncio.run(MicroAgent(Settings.load(args)).run())
 ```
 
 ## Configuration (`.env`)

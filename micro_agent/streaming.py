@@ -37,7 +37,8 @@ class RunPrinter:
                     for call in msg.tool_calls:
                         if is_main and call["name"] == "task":
                             self._pending.append(call["args"].get("subagent_type", "subagent"))
-                        log(f"[{label}] tool → {call['name']}({truncate(json.dumps(call['args'], ensure_ascii=False))})")
+                        args = truncate(json.dumps(call["args"], ensure_ascii=False))
+                        log(f"[{label}] tool → {call['name']}({args})")
                     if is_main and not msg.tool_calls:
                         self._final = msg
                 elif isinstance(msg, ToolMessage):

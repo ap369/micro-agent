@@ -971,8 +971,8 @@ dependencies = [
 requires-dist = [
     { name = "deepagents", specifier = ">=0.7.38" },
     { name = "langchain", specifier = ">=1.5" },
-    { name = "langchain-mcp-adapters", specifier = ">=0.1" },
-    { name = "langchain-openai", specifier = ">=0.3" },
+    { name = "langchain-mcp-adapters", specifier = ">=0.3" },
+    { name = "langchain-openai", specifier = ">=1.7" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]

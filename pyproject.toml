@@ -1,13 +1,20 @@
 [project]
 name = "micro-agent"
 version = "0.1.0"
-description = "One-shot LangChain agent with MCP tools, sandboxed file access and a markdown knowledge base"
+description = "One-shot deep agent (LangChain deepagents): goal + prompt, skills, sub-agents, MCP servers and a sandboxed workspace"
 requires-python = ">=3.11"
 dependencies = [
+    "deepagents>=0.7.38",
     "langchain>=1.5",
-    "langchain-openai>=0.3",
-    "langchain-mcp-adapters>=0.1",
+    "langchain-mcp-adapters>=0.3",
+    "langchain-openai>=1.7",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
-    "deepagents>=0.7.38",
 ]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]

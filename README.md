@@ -54,7 +54,7 @@ cp .env.example .env
 # 4. (optional) add MCP servers to mcp.json
 
 # 5. Run
-uv run agent.py
+uv run run.py
 ```
 
 The sample `goal.md` has the agent write `workspace/report.md` using the `report-writing` skill, then hand it to the `reviewer` sub-agent, which writes `workspace/review.md`. You can run it straight after setting up `.env`.
@@ -63,7 +63,7 @@ The sample `goal.md` has the agent write `workspace/report.md` using the `report
 
 | File / folder   | Purpose |
 |-----------------|---------|
-| `agent.py`      | Entry point (`uv run agent.py`); the code lives in `micro_agent/` |
+| `run.py`        | Entry point (`uv run run.py`); the code lives in `micro_agent/` |
 | `goal.md`       | The task, sent as the user message |
 | `prompt.md`     | System instructions / persona |
 | `skills/`       | One folder per skill, each with a `SKILL.md` and optional supporting files |
@@ -211,7 +211,7 @@ These come from `deepagents`' `FilesystemMiddleware` on top of a `FilesystemBack
 Override any input from the command line:
 
 ```bash
-uv run agent.py --goal goals/report.md --prompt prompts/analyst.md --mcp mcp.prod.json --env .env.prod \
+uv run run.py --goal goals/report.md --prompt prompts/analyst.md --mcp mcp.prod.json --env .env.prod \
     --skills skills-prod --agents agents-prod
 ```
 
@@ -220,7 +220,7 @@ uv run agent.py --goal goals/report.md --prompt prompts/analyst.md --mcp mcp.pro
 - Progress (MCP connections, every tool call and result) is printed to **stderr**, tagged `[main]` or with the sub-agent's name, e.g. `[reviewer]`
 - The final answer is printed to **stdout** and saved to `workspace/_result.md`
 
-So `uv run agent.py > answer.md` captures only the answer.
+So `uv run run.py > answer.md` captures only the answer.
 
 | Code | Meaning |
 |------|---------|
@@ -234,3 +234,12 @@ So `uv run agent.py > answer.md` captures only the answer.
 - **The agent never calls tools**: your model or endpoint probably doesn't support OpenAI-style tool calling. Try another model.
 - **`[mcp] WARNING: failed to load server ...`**: check that the command is installed and on your `PATH`, or that the URL and headers are right.
 - **Stops with exit code 3**: raise `MAX_STEPS` or make the goal more specific.
+
+## Development
+
+Lint and format settings live in `pyproject.toml`:
+
+```bash
+uvx ruff check .
+uvx ruff format .
+```

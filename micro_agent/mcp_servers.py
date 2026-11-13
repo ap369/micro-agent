@@ -54,6 +54,7 @@ class McpToolLoader:
 def _expand_env(value):
     """Recursively replace ${VAR} placeholders with environment values."""
     if isinstance(value, str):
+
         def lookup(m: re.Match) -> str:
             if m.group(1) not in os.environ:
                 raise ConfigError(f"mcp.json references ${{{m.group(1)}}} but it is not set (add it to .env)")

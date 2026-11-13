@@ -3,6 +3,7 @@
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from langchain.agents.middleware import ModelCallLimitMiddleware
+from langgraph.graph.state import CompiledStateGraph
 
 from micro_agent.config import Settings
 from micro_agent.console import log
@@ -34,7 +35,7 @@ class MicroAgent:
         (self.settings.workspace / RESULT_FILE).write_text(result, encoding="utf-8")
         return result
 
-    async def _build(self):
+    async def _build(self) -> CompiledStateGraph:
         s = self.settings
         s.workspace.mkdir(parents=True, exist_ok=True)
 
@@ -58,7 +59,9 @@ class MicroAgent:
 
     def _backend(self, skills: SkillCatalog) -> CompositeBackend:
         """`/` = workspace, `/skills/` = skills folder."""
-        routes = {SKILLS_ROUTE: FilesystemBackend(root_dir=skills.dir, virtual_mode=True)} if skills.enabled else {}
+        routes = {}
+        if skills.enabled:
+            routes[SKILLS_ROUTE] = FilesystemBackend(root_dir=skills.dir, virtual_mode=True)
         return CompositeBackend(
             default=FilesystemBackend(root_dir=self.settings.workspace, virtual_mode=True),
             routes=routes,

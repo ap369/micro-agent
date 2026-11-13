@@ -12,7 +12,8 @@ from micro_agent.llm import ModelFactory
 from micro_agent.markdown import parse_frontmatter
 from micro_agent.skills import SKILLS_READ_ONLY, SkillCatalog
 
-READ_ONLY = FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")
+# `read_only: true` agents can read everything but write nothing
+DENY_ALL_WRITES = FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")
 
 
 class SubAgentLoader:
@@ -87,7 +88,7 @@ class SubAgentLoader:
     @staticmethod
     def _permissions(meta: dict) -> list[FilesystemPermission]:
         # sub-agent rules replace the parent's, so always keep skills read-only
-        return [SKILLS_READ_ONLY, READ_ONLY] if meta.get("read_only") else [SKILLS_READ_ONLY]
+        return [SKILLS_READ_ONLY, DENY_ALL_WRITES] if meta.get("read_only") else [SKILLS_READ_ONLY]
 
     def _step_limit(self, meta: dict, path: Path) -> ModelCallLimitMiddleware:
         max_steps = meta.get("max_steps", self._default_max_steps)
